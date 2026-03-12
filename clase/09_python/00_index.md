@@ -96,7 +96,7 @@ Completa el curso y sube la certificacion a tu directorio de certificaciones, cr
 
 
 
-:::project{id="9.P1" title="Proyecto: Librería de Python publicable en PyPI" due="2026-04-28" points="10"}
+:::project{id="9.P1" title="Proyecto: Librería de Python publicable en PyPI" due="2026-04-09" points="10"}
 
 Desarrolla una librería de Python útil y publicable. El tema es libre, pero debe resolver un problema real y tener un caso de uso claro.
 

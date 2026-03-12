@@ -275,7 +275,38 @@ Escenario B — LLM local (CPU-bound)
           (ProcessPoolExecutor — P procesos paralelos)
 ```
 
-Esta arquitectura evoluciona a través del módulo. En `01`–`03` construimos la base; en `04a`–`04b` implementamos el Escenario A (chatbot v2); en `05` añadimos los workers del Escenario B (chatbot v3).
+### Lectura del diagrama — Escenario A
+
+El proceso principal es **un único proceso Python** con **un único hilo del OS** (el event loop). Dentro de ese hilo corren N *coroutines* — funciones que ceden control voluntariamente al event loop cuando llegan a un `await`. Cuando una petición espera la respuesta de la API de OpenAI (wait ≈ 1500ms), el hilo no se bloquea: el event loop pasa a atender otra petición. Desde el punto de vista del OS, es siempre el mismo hilo ejecutando; desde el punto de vista del GIL, nunca hay conflicto porque solo hay un hilo. La base de datos también es I/O-bound — el event loop la maneja con el mismo mecanismo.
+
+**Por qué funciona:** el 99.94% del tiempo de cada petición es espera de dispositivos externos. Con un solo hilo podemos intercalar cientos de esas esperas. No necesitamos más procesos ni más hilos.
+
+### Lectura del diagrama — Escenario B
+
+Aquí hay **dos niveles de procesos**. El proceso principal sigue siendo el event loop asyncio: recibe peticiones, consulta la BD, envía respuestas — todo I/O-bound, igual que en A. Pero la inferencia del LLM local es CPU-bound: mantiene el hilo ocupado durante ~2000ms, lo que bloquearía el event loop y paralizaría al servidor entero.
+
+La solución es `run_in_executor`: el event loop delega la inferencia a un `ProcessPoolExecutor`. Cada worker es un **proceso separado** — con su propio intérprete Python y su propio GIL. Por eso pueden ejecutar Python puro en paralelo real. Los datos del historial viajan del proceso principal a cada worker por IPC (serialización via `pickle`); el resultado regresa por el mismo canal. Desde el punto de vista del event loop, esta delegación es un `wait(τᵢ)` más — puede seguir atendiendo nuevas peticiones mientras los workers procesan en paralelo.
+
+**Por qué es necesario multiprocessing y no threading:** la inferencia nunca libera el GIL (no hay I/O). Con `threading`, los hilos se turnarían en lugar de ejecutar en paralelo. Los procesos separados son la única forma de usar múltiples cores para código Python puro.
+
+---
+
+### Hoja de ruta del módulo
+
+Esta es la arquitectura hacia la que construimos. Cada archivo y notebook cubre un eslabón específico:
+
+| Archivo | Contenido | Versión chatbot | Escenario |
+|---------|-----------|-----------------|-----------|
+| **`01` (este archivo)** + notebook `01` | Procesos, hilos, GIL, I/O-bound vs CPU-bound | base conceptual | A y B definidos |
+| **`02`** + notebook `01` | Modelo secuencial M1 — por qué falla con múltiples usuarios | chatbot v1 | A: 155s para 100 usuarios |
+| **`03`** | Concurrencia M2/M3/M4 — qué es solapamiento, qué es async | framework teórico | A en M4, B excluido por GIL |
+| **`04a`** + notebook `02` | `asyncio` fundamentos — `async def`, `await`, `gather` | chatbot v2 | **A implementado** |
+| **`04b`** + notebook `02` | `asyncio` patrones — `create_task`, `Queue`, anti-patrones | chatbot v2 refinado | A con backpressure |
+| **`05`** + notebook `03` | Paralelismo M5, Ley de Amdahl, `ProcessPoolExecutor` | chatbot v3 | **B implementado** |
+| **`06`** | Librerías Python y árbol de decisión | referencia | A→M4, B→M5b |
+| **`07`** | Cómputo distribuido M6 — introducción conceptual | chatbot v4 conceptual | A y B escalados horizontalmente |
+
+Cada notebook está diseñado para ejecutarse en orden. Las celdas sin completar son trabajo autónomo — no hay distinción explícita entre "en clase" y "tarea"; el límite es hasta dónde lleguemos juntos.
 
 ---
 
